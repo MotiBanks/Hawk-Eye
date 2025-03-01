@@ -3,6 +3,7 @@ import requests
 import time
 import sqlite3
 from dotenv import load_dotenv  
+from datetime import datetime, timezone  
 
 # Load environment variables
 load_dotenv()
@@ -11,6 +12,7 @@ load_dotenv()
 ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY")
 TELEGRAM_BOT_API_KEY = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TRANSACTION_THRESHOLD = 1.0  # ✅ Minimum ETH amount to trigger an alert
 
 # Load Ethereum hacker addresses from file
 with open("eth_hacker_addresses.txt", "r") as file:
@@ -75,24 +77,30 @@ while True:
             to_address = latest_tx.get("to", "Unknown")
             value_wei = latest_tx.get("value", "0")
             value_eth = int(value_wei) / 1e18  
-            timestamp = latest_tx.get("timeStamp", "Unknown")
+            timestamp = int(latest_tx.get("timeStamp", "0"))  # Convert to integer
 
-            # ✅ Alert only for new transactions (≥ 0.1 ETH)
-            if (address not in last_transactions or last_transactions[address] != tx_hash) and value_eth >= 0.1:
-                last_transactions[address] = tx_hash  
-                category = classify_transaction(to_address)
+            # ✅ Check if the transaction happened in the last 60 seconds and meets threshold
+            current_time = int(datetime.now(timezone.utc).timestamp())
+            time_diff = current_time - timestamp  # Difference in seconds
 
-                # Save transaction in database
-                cursor.execute("""
-                    INSERT OR IGNORE INTO transactions (address, tx_hash, to_address, value, timestamp, detected_as)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (address, tx_hash, to_address, value_eth, timestamp, category))
-                conn.commit()
+            if time_diff <= 60 and value_eth >= TRANSACTION_THRESHOLD:  # ✅ Ensure it's recent & meets threshold
+                if address not in last_transactions or last_transactions[address] != tx_hash:
+                    last_transactions[address] = tx_hash  
+                    category = classify_transaction(to_address)
 
-                # Send alert
-                alert_message = f"🚨 Live Transaction Alert!\nAddress: {address}\nTo: {to_address}\nCategory: {category}\nAmount: {value_eth:.6f} ETH\nTx Hash: {tx_hash}\n🔍 Check: https://etherscan.io/tx/{tx_hash}"
-                send_telegram_alert(alert_message)
-                print(alert_message)
+                    # Save transaction in database
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO transactions (address, tx_hash, to_address, value, timestamp, detected_as)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (address, tx_hash, to_address, value_eth, timestamp, category))
+                    conn.commit()
+
+                    # Send alert
+                    alert_message = f"🚨 Live Transaction Alert!\nAddress: {address}\nTo: {to_address}\nCategory: {category}\nAmount: {value_eth:.6f} ETH\nTx Hash: {tx_hash}\n🔍 Check: https://etherscan.io/tx/{tx_hash}"
+                    send_telegram_alert(alert_message)
+                    print(alert_message)
+            else:
+                print(f"⏳ Ignoring transaction for {address}: {tx_hash} (Occurred {time_diff} seconds ago, Amount: {value_eth:.6f} ETH)")
 
     print("⏳ Waiting 10 seconds before next check...")
     time.sleep(10)  # ✅ Reduced wait time to 10 seconds
