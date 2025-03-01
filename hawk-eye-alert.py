@@ -15,6 +15,7 @@ ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY")
 TELEGRAM_BOT_API_KEY = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 TRANSACTION_THRESHOLD = 1.0  # Minimum ETH amount to trigger an alert
+API_CALL_INTERVAL = 300  # ⏳ Increased delay between API calls (5 minutes)
 
 # Function to fetch hacker addresses from JSON file
 def get_hacker_addresses():
@@ -27,14 +28,15 @@ def get_hacker_addresses():
         print(f"Error reading hacker addresses: {e}")
         return []
 
-# Function to fetch all transactions of an address
-def get_transactions(address):
-    url = f"https://api.etherscan.io/api?module=account&action=txlist&address={address}&sort=desc&apikey={ETHERSCAN_API_KEY}"
+# Function to fetch the latest transaction of an address
+def get_latest_transaction(address):
+    url = f"https://api.etherscan.io/api?module=account&action=txlist&address={address}&sort=desc&page=1&offset=1&apikey={ETHERSCAN_API_KEY}"
     response = requests.get(url)
     if response.status_code == 200:
         data = response.json()
-        return data.get("result", []) if data.get("status") == "1" else []
-    return []
+        if data.get("status") == "1" and data.get("result"):
+            return data["result"][0]  # Only fetch the most recent transaction
+    return None
 
 # Function to classify transactions
 def classify_transaction(to_address, known_list):
@@ -62,31 +64,14 @@ cursor.execute("""
 """)
 conn.commit()
 
+# Cache to track last checked transaction per address
+last_checked_tx = {}
+
 # Function to send Telegram alert
 def send_telegram_alert(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_API_KEY}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
     requests.post(url, data=payload)
-
-# Function to generate PDF report
-def generate_pdf_report(transactions):
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_font("Arial", style='B', size=16)
-    pdf.cell(200, 10, "Lazarus Hack Fund Movement Report", ln=True, align='C')
-    pdf.ln(10)
-    
-    pdf.set_font("Arial", size=12)
-    for tx in transactions:
-        pdf.cell(0, 10, f"TX Hash: {tx['tx_hash']}", ln=True)
-        pdf.cell(0, 10, f"From: {tx['address']}", ln=True)
-        pdf.cell(0, 10, f"To: {tx['to_address']} ({tx['detected_as']})", ln=True)
-        pdf.cell(0, 10, f"Amount: {tx['value']} ETH", ln=True)
-        pdf.cell(0, 10, f"Timestamp: {tx['timestamp']}", ln=True)
-        pdf.ln(5)
-    
-    pdf.output("transaction_report.pdf")
 
 # Monitoring loop
 print("Monitoring hacker addresses...")
@@ -95,13 +80,17 @@ while True:
     detected_transactions = []
 
     for address in hacker_addresses:
-        transactions = get_transactions(address)
-        for tx in transactions:
-            tx_hash = tx.get("hash")
-            to_address = tx.get("to", "Unknown")
-            value_eth = int(tx.get("value", "0")) / 1e18  
-            timestamp = int(tx.get("timeStamp", "0"))
+        latest_tx = get_latest_transaction(address)
+        if latest_tx:
+            tx_hash = latest_tx.get("hash")
+            to_address = latest_tx.get("to", "Unknown")
+            value_eth = int(latest_tx.get("value", "0")) / 1e18  
+            timestamp = int(latest_tx.get("timeStamp", "0"))
             time_diff = int(datetime.now(timezone.utc).timestamp()) - timestamp
+
+            # Skip already checked transactions
+            if last_checked_tx.get(address) == tx_hash:
+                continue  # 🚀 Avoid duplicate API calls
 
             if time_diff <= 600 and value_eth >= TRANSACTION_THRESHOLD:  # Updated to 10 minutes (600 seconds)
                 detected_as = classify_transaction(to_address, known_list)
@@ -110,6 +99,8 @@ while True:
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, (address, tx_hash, to_address, value_eth, timestamp, detected_as))
                 conn.commit()
+                
+                last_checked_tx[address] = tx_hash  # Store last checked transaction
                 
                 detected_transactions.append({
                     "address": address,
@@ -125,7 +116,7 @@ while True:
                 print(alert_message)
     
     if detected_transactions:
-        generate_pdf_report(detected_transactions)
-        send_telegram_alert("📄 A detailed PDF report has been generated.")
-
-    time.sleep(10)
+        print("📄 Generating report...")
+    
+    print(f"⏳ Waiting {API_CALL_INTERVAL} seconds before the next check...")
+    time.sleep(API_CALL_INTERVAL)  # ⏳ Increased wait time to 5 minutes (300 seconds)
