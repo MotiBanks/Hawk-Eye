@@ -10,7 +10,7 @@ from fpdf import FPDF  # PDF generation
 
 # Load environment variables
 load_dotenv(override=True)
-ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY")
+ETHERSCAN_API_KEY = ("GZM8MTWKSYRGVR3REDWP5J33FDQ9CA4JC7")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
