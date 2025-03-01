@@ -1,0 +1,1 @@
+worker: python hawk-eye-alert.py
