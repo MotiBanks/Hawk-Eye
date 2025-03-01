@@ -2,6 +2,7 @@ import os
 import requests
 import time
 import sqlite3
+import json
 from dotenv import load_dotenv  
 from datetime import datetime, timezone  
 
@@ -14,9 +15,23 @@ TELEGRAM_BOT_API_KEY = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 TRANSACTION_THRESHOLD = 1.0  # ✅ Minimum ETH amount to trigger an alert
 
-# Load Ethereum hacker addresses from file
-with open("eth_hacker_addresses.txt", "r") as file:
-    hacker_addresses = [line.strip() for line in file.readlines()]
+# Function to fetch hacker addresses from the JSON file
+def get_hacker_addresses():
+    try:
+        with open("hacker_addresses.json", "r") as file:
+            data = json.load(file)
+
+        # Extract addresses correctly (assuming structure like { "0221": { "eth": [..addresses..] } })
+        hacker_addresses = []
+        for key, value in data.items():
+            if isinstance(value, dict) and "eth" in value:
+                hacker_addresses.extend(value["eth"])  # Add Ethereum addresses to the list
+
+        return hacker_addresses
+
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"⚠️ Error reading hacker addresses: {e}")
+        return []  # Return empty list to prevent script failure
 
 # Connect to SQLite database (or create if not exists)
 conn = sqlite3.connect("transactions.db")
@@ -69,6 +84,9 @@ print("✅ Test alert sent to Telegram!")
 
 print("📡 Monitoring hacker addresses...")
 while True:
+    # Load updated hacker addresses before each monitoring cycle
+    hacker_addresses = get_hacker_addresses()
+
     for address in hacker_addresses:
         latest_tx = get_latest_transaction(address)
 
